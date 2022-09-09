@@ -1,4 +1,5 @@
 from solution0 import *
+from scipy.spatial import ConvexHull
 
 
 
@@ -1092,3 +1093,352 @@ def get_pred_errors_for_conv2d():
 		preds[tuple(mick_shape)] = pred_cost	
 	return ansors, preds, avg_errors_keys
 	################################################################################################
+
+
+
+
+def get_cost_model_params(micK_curs_multiTiles, op_type):
+	# 
+	# return the points on the upper part of the convex hull of the original point set
+	def get_up_part_of_ConvexHull(xs, ys):
+	    points = list(zip(xs, ys))
+	    hull = ConvexHull(points)
+	    up_xs = list()
+	    up_ys = list()
+	    for i, idx in enumerate(hull.vertices):
+	        x = xs[idx]
+	        y = ys[idx]
+	        next_idx = hull.vertices[0]
+	        if i < (len(hull.vertices) - 1): 
+	            next_idx = hull.vertices[i+1]
+	        if xs[next_idx] < x:
+	            if x not in up_xs:
+	                up_xs.append(x)
+	                up_ys.append(y)
+	            if xs[next_idx] not in up_xs:
+	                up_xs.append(xs[next_idx])
+	                up_ys.append(ys[next_idx])
+	    sorted_idx = sorted(range(len(up_xs)), key=lambda i: up_xs[i])
+	    return np.array(up_xs)[sorted_idx], np.array(up_ys)[sorted_idx]
+	# 
+	def get_close_points_from_ConvexHull(xs, ys, ratio=1):
+	#     ratio defines how close the points from the hull we want
+	    hull_xs, hull_ys = get_up_part_of_ConvexHull(xs, ys)
+	    if (len(hull_xs)>1) and (hull_ys[0]>=hull_ys[1]):
+	        xs = [xs[i] for i in range(len(xs)) if (xs[i] != hull_xs[0] and ys[i] != hull_ys[0])]
+	        ys = [ys[i] for i in range(len(xs)) if (xs[i] != hull_xs[0] and ys[i] != hull_ys[0])]
+	        hull_xs, hull_ys = get_up_part_of_ConvexHull(xs, ys)
+	    ret_xs, ret_ys = list(), list()
+	    for x,y in zip(xs,ys):
+	        x1, x2 = None, None
+	        y1, y2 = None, None
+	        for i in range(len(hull_xs) - 1):
+	            if (x >=hull_xs[i] and x <= hull_xs[i+1]):
+	                x1, x2 = hull_xs[i], hull_xs[i+1]
+	                y1, y2 = hull_ys[i], hull_ys[i+1]
+	                break
+	        assert x1!=None
+	        ytmp = (y1-y2)*(x-x2)/(x1-x2)+y2
+	        if y>=(ratio*ytmp):
+	            ret_xs.append(x)
+	            ret_ys.append(y)
+	    point_dict = dict()
+	    for i, x in enumerate(ret_xs):
+	        if x not in point_dict:
+	            point_dict[x] = list()
+	        point_dict[x].append(ret_ys[i])
+	    ret_xs, ret_ys = list(), list()
+	    for x in sorted(point_dict.keys()):
+	        ret_xs = ret_xs + [x for i in [point_dict[x]]]
+	        ret_ys = ret_ys + sorted(point_dict[x], reverse=True)
+	#     sorted_idx = sorted(range(len(ret_xs)), key=lambda i: ret_xs[i])
+	#     return np.array(ret_xs)[sorted_idx], np.array(ret_ys)[sorted_idx]
+	    return np.array(ret_xs), np.array(ret_ys)
+	    
+	SMNum=108
+	popts = dict()
+	curve_rep_layouts = dict()
+	# base_blk_nums = [SMNum*i+1 for i in range(5)] + [(i+1)*SMNum for i in range(5)]
+	interested_blkNs = {0:[48, 108], 1:[110, 216], 2:[220, 324], 3:[330, 432], 4:[440, 540]}
+	base_blk_nums = list()
+	for k in range(5):
+		base_blk_nums = base_blk_nums + interested_blkNs[k]
+
+	base_reduc_rep_nums = [2**i for i in range(7)]
+	base_reduc_lens = [6, ] + list(range(12, 121, 12)) + [128, ] # [6, 12, 24, 36, 48, 60, 72, ]#18,]
+	fix_lens = list(range(1, 22))+["inf"] #[1, 2, 3, 4, 5, 6, 7, 8, "inf"] # [1, 2, 3, 4, 5, 6, "inf"]
+	# rep_keys = ['line', 'square']
+	rep_keys = ['line_h', 'line_v', 'square']
+	if op_type in ['bmm', 'bmm_nn']:
+		rep_keys = ['line_b', 'square'] # one rep layout is only replicate along batch axis, the other one is square over h and w
+
+	interested_Rsps = dict()
+	if op_type == 'conv2d':
+		# for conv2d, we draw curves for each reduction loop shape, instead of each reduction loop size
+		base_red_shapes = list()
+		for r_size in base_reduc_lens:
+			rw = get_symmetric_factor(r_size)
+			rh = r_size // rw
+			base_red_shapes.append((1, rh, rw))
+			# base_red_shapes.append((r_size, 1, 1))
+			rw = min(factorint(r_size).keys())
+			base_red_shapes.append((r_size//rw, 1, rw))
+			interested_Rsps[r_size] = base_red_shapes[-2:] #[(1, rh, rw), (r_size, 1, 1)]
+		base_reduc_lens = base_red_shapes
+	else:
+		for r_size in base_reduc_lens:
+			interested_Rsps[r_size] = [(r_size, )]	
+
+
+	curve_poses = ['up', 'lw']
+	xs_dict = dict()
+	ys_dict = dict()
+	# valid_xs_dict = dict()
+	# valid_ys_dict = dict()
+	shape_dict = dict()
+	# sqr_xs_dict = dict()
+	# sqr_ys_dict = dict()
+
+
+	for reduc_len in base_reduc_lens:
+		for reduc_rep_num in base_reduc_rep_nums:
+			for blk in base_blk_nums:
+				for repK in rep_keys:
+					for pos in curve_poses:
+						for fixlen in fix_lens:
+							key = (reduc_len, reduc_rep_num, blk, repK, pos, fixlen)
+	                        xs_dict[key] = list()
+	                        ys_dict[key] = list()
+	                        valid_xs_dict[key] = list()
+	                        valid_ys_dict[key] = list()
+	                        shape_dict[key] = list()
+	                        sqr_xs_dict[key] = list()
+	                        sqr_ys_dict[key] = list()
+							if repK == 'square':
+								tmp = sorted(get_factors(blk), key=lambda repN: repN+blk//repN)[0]
+								if tmp == 1:
+									curve_rep_layouts[key] = (blk, 1)
+								else:
+									curve_rep_layouts[key] = (tmp, blk//tmp)
+							elif repK == 'line_h':
+								curve_rep_layouts[key] = (1, blk)
+							elif repK == 'line_v':
+								curve_rep_layouts[key] = (blk, 1)
+							elif repK == 'line_b':
+								curve_rep_layouts[key] = (blk, 1, 1)
+							if op_type == 'conv2d':
+								curve_rep_layouts[key] = curve_rep_layouts[key] + (1,1)
+							if (op_type in ['bmm','bmm_nn']) and (repK == 'square'):
+								curve_rep_layouts[key] = (1, ) + curve_rep_layouts[key]
+
+	selected_fixedL_dict = None
+	if op_type == 'dense':
+		selected_fixedL_dict = {6: 2, 12: 4, 24: 8, 36: 8, 48: 8, 60: 4, 72: 6, 84: 2, 96: 4, 108: 8, 120: 4, 128: 16}
+	elif op_type == 'bmm':
+		selected_fixedL_dict = {108: 8, 128: 8, 6: 2, 12: 4, 24: 8, 36: 8, 48: 8, 60: 4, 72: 6, 84: 2, 96: 4, 120: 4}
+	elif op_type == 'bmm_nn':
+		selected_fixedL_dict = {6: 1, 12: 2, 24: 4, 36: 2, 48: 8, 60: 4, 72: 6, 84: 2, 96: 4, 108: 8, 120: 4, 128: 8}
+	elif op_type == 'conv2d':
+		selected_fixedL_dict = {(1, 2, 3): 1, (3, 1, 2): 1, (1, 3, 4): 1, (6, 1, 2): 1, (1, 4, 6): 2, (12, 1, 2): 2, (1, 6, 6): 2, (18, 1, 2): 2, (1, 6, 8): 4, (24, 1, 2): 4, (1, 6, 10): 4, (30, 1, 2): 4, (1, 8, 9): 4, (36, 1, 2): 4, (1, 7, 12): 2, (42, 1, 2): 2, (1, 8, 12): 8, (48, 1, 2): 8, (1, 9, 12): 2, (54, 1, 2): 2, (1, 10, 12): 8, (60, 1, 2): 8, (1, 8, 16): 8, (64, 1, 2): 16}
+
+
+	for k_i, (k, v) in enumerate(micK_curs_multiTiles.items()):
+		if (len(v) != 210) or (op_type in ['bmm', 'bmm_nn'] and len(v) != 140):
+			continue
+		poses = list()
+		Rsp = None
+		in_lw1, in_lw2 = False, False
+        if op_type == 'dense':
+			sshape = k[:2]
+			size = get_product(sshape)
+			n = get_symmetric_factor(size)
+			m = size // n
+			best_s = [n, m]
+			if best_s == list(sshape):
+				poses.append('up')
+			# 
+			Rsp = k[-1]
+			if (k[0] == selected_fixedL_dict[k[-1]]):
+				in_lw1 = True
+			if (sum(k[:2])>=(49152 / 4 - 400)//k[2]):
+				in_lw2 = True
+			if in_lw2 or in_lw1:
+				poses.append('lw')
+		elif op_type in ['bmm', 'bmm_nn']:
+			sshape = k[:3]
+			size = get_product(sshape)
+			n = get_symmetric_factor(size)
+			m = size // n
+			best_s = [1, n, m]
+			extra_s = None
+			if n == m:
+				for i, f in enumerate(get_factors(size)):
+					if get_factors(size)[i+1] == n:
+						extra_s = [1, size//f, f]
+						break
+			if (best_s == list(sshape)) or ([1, m, n] == list(sshape)) or ((extra_s != None) and (extra_s == list(sshape))):
+				poses.append('up')
+			# 
+			Rsp = k[-1]
+			if (k[1] == selected_fixedL_dict[k[-1]]):
+				in_lw1 = True
+			if (sum(k[1:3])>=(49152 / 4 - 400)//(k[0]*k[3])):
+				in_lw2 = True
+			if in_lw2 or in_lw1:
+				poses.append('lw')
+			# 
+		elif op_type == 'conv2d':
+			rc, rh, rw, stride, padding, dilation = k[-6:]
+			sshape = k[:4]
+			poses = list()
+			size = get_product(sshape)
+			data_read = data_read_amount_PerBlk(op_type, k)
+			#         
+			n1s = get_factors(size)
+			min_cost = None
+			best_s = None
+			for n1 in n1s:
+				for h in get_factors(n1):
+					w = n1//h
+					n = 1
+					c = size//n1
+					cost = data_read_amount_PerBlk(op_type, [n, c, h, w]+[rc, rh, rw, stride, padding, dilation])
+					if (min_cost==None) or (cost < min_cost):
+						min_cost = cost
+						best_s = [n, c, h, w]
+			#         
+			if (best_s == list(sshape)) or (data_read<=min_cost):
+			    poses.append('up')
+			#   
+			Rsp = (rc, rh, rw)    
+			if ((k[3] == selected_fixedL_dict[(rc, rh, rw)]) and (k[0] == 1) and (k[2] == 1)):
+				in_lw1 = True
+			if ((k[1] >= max(int((49152 / 4 - 400-rc*rh*(k[3]-1+rw))//(rc*rh*rw)), 1)) and (k[0] == 1) and (k[2] == 1)):
+				in_lw2 = True
+			# 
+			if in_lw2 or \
+				(data_read>=(49152 / 4 - 400)) or \
+				in_lw1:
+				poses.append('lw')
+		# 
+        if len(poses) == 0:
+            continue
+        count = 0
+        for reduc_rep_num in base_reduc_rep_nums:
+            for n in range(0, 5):
+                blk_nums = interested_blkNs[n]
+                for blk_num in blk_nums:
+                    for repK in rep_keys:
+                        if v[count] > 1:
+                            for pos in poses:
+                                fixlen = ["inf"]
+                                if (pos == 'lw') and in_lw1:#(micK_curs_multiTiles == micK_curs_multiTiles_56):#(sum(k[:2])<(49152 / 4 - 400)//k[2]):#(k[0] <= 5):
+                                    fixlen = [selected_fixedL_dict[Rsp]] # [k[0]]
+                                if (pos == 'lw') and (in_lw2 or \
+                                    (data_read>=(49152 / 4 - 400))):
+                                    fixlen.append('inf')
+                                for fl in fixlen:
+                                    key = (Rsp, reduc_rep_num, blk_num, repK, pos, fl)
+                                    if k in shape_dict[key]:
+                                        continue
+                                    xs_dict[key].append(get_product(sshape))
+                                    ys_dict[key].append(v[count])
+                                    shape_dict[key].append(k)                              
+                        count+=1
+
+	markers = ['v', '<']
+	fixlenColors = ['purple']*(len(fix_lens)-1)+['green']
+
+	for reduc_len in base_reduc_lens:
+	    for reduc_rep_num in base_reduc_rep_nums:
+	        for blk in base_blk_nums:
+	            for repK in rep_keys:
+	                for pos, marker in zip(curve_poses, markers):
+	                    for fixlen, fixlenColor in zip(fix_lens, fixlenColors):
+	                        key = (reduc_len, reduc_rep_num, blk, repK, pos, fixlen)
+	                        Xs = np.array(xs_dict[key])#/1e4
+	                        Ys = np.log(np.array(ys_dict[key]))#/1e3
+	                        # Ys_latency = np.array([x*1e4/y/1e3/1e9 for x, y in zip(Xs, Ys)])
+	                        # sqr_Xs = np.array(sqr_xs_dict[key])#/1e4
+	                        # sqr_Ys = np.log(np.array(sqr_ys_dict[key]))#/1e3
+	                        # valid_Xs = np.array(valid_xs_dict[key])#/1e4
+	                        # valid_Ys = np.log(np.array(valid_ys_dict[key]))#/1e3
+	                        if len(list(Ys[:10]))>0:
+	                            print("="*50)
+	                            print(key)
+	                            print(list(Ys[:10]))
+	                        # func_micK_curv = func_micK_curvs[key]
+	                        popt = None
+	                        if pos == 'up':
+	                            if len(Xs) == 0:
+	                                continue
+	                            Xs_fit, Ys_fit = get_close_points_from_ConvexHull(Xs, Ys, ratio=1)#(sqr_Xs, sqr_Ys, ratio=1)
+	                            popt = (list(Xs_fit), list(Ys_fit))
+	                        else: 
+	                            if len(Xs) == 0:
+	                                continue
+	                            Xs_fit, Ys_fit = get_close_points_from_ConvexHull(Xs, Ys, ratio=1)
+	                            print(list(Xs), list(Ys))
+	                            popt = (list(Xs_fit), list(Ys_fit))
+	                        popts[key] = popt
+	                        print(f"the best params are {popt}")
+	return popts
+
+
+
+
+
+
+
+
+def get_init_pred_errors(ansors, preds, avg_errors_keys):
+	errors = {'Ssize':dict(), 'Rsp':dict()}
+	for kind, vs in avg_errors_keys.items():
+		for k, msp in vs.items():
+			if preds[msp] == 1e10:
+				continue
+			errors[kind][k] = ansors[msp] / preds[msp]
+	return errors
+
+
+
+
+def get_data_for_cost_model(op_type):
+	if op_type == 'dense':
+		return get_data_for_dense()
+	elif op_type == 'bmm':
+		return get_data_for_bmm()
+	elif op_type == 'bmm_nn':
+		return get_data_for_bmm_nn()
+	elif op_type == 'conv2d':
+		return get_data_for_conv2d()
+
+
+def get_data_for_pred_errors(op_type):
+	if op_type == 'dense':
+		return get_pred_errors_for_dense()
+	elif op_type == 'bmm':
+		return get_pred_errors_for_bmm()
+	elif op_type == 'bmm_nn':
+		return get_pred_errors_for_bmm_nn()
+	elif op_type == 'conv2d':
+		return get_pred_errors_for_conv2d()	
+
+
+
+if __name__ == "__main__":
+	# get cost model parameters
+	for op_type in ['dense', 'bmm', 'bmm_nn', 'conv2d']:
+		ansors = get_data_for_cost_model(op_type)
+		popts = get_cost_model_params(ansors, op_type)
+		with open(f'cost_model_params_{op_type}.py', 'w') as f:
+			f.write(f'def get_popts():\n\treturn {popts}\n')
+	# 
+	# get init pred errors
+	for op_type in ['dense', 'bmm', 'bmm_nn', 'conv2d']:
+		ansors, preds, avg_errors_keys = get_data_for_pred_errors(op_type)
+		errors = get_init_pred_errors(ansors, preds, avg_errors_keys)
+		with open(f'pred_errors_{op_type}.py', 'w') as f:
+			f.write(f'def get_pred_errors():\n\treturn {errors}\n')
+
+
