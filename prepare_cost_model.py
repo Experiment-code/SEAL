@@ -3,8 +3,8 @@ from scipy.spatial import ConvexHull
 
 
 
-	################################################################################################
-	# DENSE only test the shapes with the largest space size (around 25000) and fixed reduction length, to see which kind of shape is valid
+################################################################################################
+# DENSE
 def get_data_for_dense():
 	op_type = 'dense'
 	tuner = 'ansor' # 'eto'
@@ -173,8 +173,8 @@ def get_data_for_dense():
 		# for k, v in tmp_ansors.items():
 		# 	ansors[k] = v
 	return ansors
-	################################################################################################
-	# DENSE collect data for prediction error
+################################################################################################
+# DENSE collect data for prediction error
 def get_pred_errors_for_dense():
 	op_type = 'dense'
 	tasks, mick_shapes, micks = list(), list(), list() # tasks only used for measuring micks when micks are being tuned
@@ -271,8 +271,8 @@ def get_pred_errors_for_dense():
 	################################################################################################
 
 
-	################################################################################################
-	# BMM: collect mick results for cost model
+################################################################################################
+# BMM: collect mick results for cost model
 def get_data_for_bmm():
 	op_type = 'bmm'
 	tuner = 'ansor' # 'eto'
@@ -435,8 +435,8 @@ def get_data_for_bmm():
 		for k, v in tmp_ansors.items():
 			ansors[k] = v
 	return ansors
-	################################################################################################
-	# BMM collect data for prediction error
+################################################################################################
+# BMM collect data for prediction error
 def get_pred_errors_for_bmm():
 	op_type = 'bmm'
 	tuner = 'ansor' # 'eto'
@@ -532,8 +532,8 @@ def get_pred_errors_for_bmm():
 	return ansors, preds, avg_errors_keys
 	# ################################################################################################
 
-	################################################################################################
-	# BMM No-Transposed version: collect mick results for cost model
+################################################################################################
+# BMM No-Transposed version: collect mick results for cost model
 def get_data_for_bmm_nn():
 	op_type = 'bmm_nn'
 	tuner = 'eto' # 'ansor' # 'eto'
@@ -697,8 +697,8 @@ def get_data_for_bmm_nn():
 		for k, v in tmp_ansors.items():
 			ansors[k] = v
 	return ansors
-	################################################################################################
-	# BMM No-Transposed version: collect data for prediction error
+################################################################################################
+# BMM No-Transposed version: collect data for prediction error
 def get_pred_errors_for_bmm_nn():
 	op_type = 'bmm_nn'
 	tuner = 'eto' # 'ansor' # 'eto'
@@ -794,9 +794,9 @@ def get_pred_errors_for_bmm_nn():
 	return ansors, preds, avg_errors_keys
 	# ################################################################################################
 
-	################################################################################################
-	# TUNE CONV2D MICRO-KERNELS: BUILD COST MODEL only test the shapes that we are interested in, 
-	# The default stride, padding, dilation is 1, 0, 1
+################################################################################################
+# TUNE CONV2D MICRO-KERNELS: BUILD COST MODEL only contain the shapes that we are interested in, 
+# The default stride, padding, dilation is 1, 0, 1
 def get_data_for_conv2d():	
 	op_type = 'conv2d'
 	dataReads = [(49152 / 4)]
@@ -978,8 +978,8 @@ def get_data_for_conv2d():
 	return ansors
 	################################################################################################
 
-	################################################################################################
-	# CONV2D collect data for prediction error
+################################################################################################
+# CONV2D collect data for prediction error
 def get_pred_errors_for_conv2d():
 	op_type = 'conv2d'
 	tasks, mick_shapes, micks = list(), list(), list() # tasks only used for measuring micks when micks are being tuned
